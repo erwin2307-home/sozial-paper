@@ -33,4 +33,8 @@ def parse_response(raw_text: str) -> dict:
         data = json.loads(json_str)
     except json.JSONDecodeError:
         data = {}
-    return {field: data.get(field, "nicht angegeben") for field in SCHEMA_FIELDS}
+    result = {}
+    for field in SCHEMA_FIELDS:
+        value = data.get(field, "nicht angegeben")
+        result[field] = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+    return result

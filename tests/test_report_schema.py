@@ -28,3 +28,19 @@ def test_parse_response_missing_fields_filled_with_default():
 def test_parse_response_garbage_returns_all_defaults():
     result = parse_response("kein json hier")
     assert all(v == "nicht angegeben" for v in result.values())
+
+def test_parse_response_coerces_non_string_field_values_to_json_string():
+    payload = {"stichprobe": {"n": 500}, "forschungsfrage": "normale Frage"}
+    raw = json.dumps(payload)
+    result = parse_response(raw)
+    assert isinstance(result["stichprobe"], str)
+    assert json.loads(result["stichprobe"]) == {"n": 500}
+    assert result["forschungsfrage"] == "normale Frage"
+
+def test_parse_response_with_nested_value_does_not_crash_pdf_export():
+    from modules.export_pdf import build_report_pdf
+    payload = {"stichprobe": {"n": 500}}
+    raw = json.dumps(payload)
+    result = parse_response(raw)
+    pdf_bytes = build_report_pdf("Titel", result)
+    assert pdf_bytes.startswith(b"%PDF")

@@ -1,4 +1,4 @@
-# README.md
+# Sozialwissenschafts-Paper-Analyse-App
 
 Streamlit-App zur Suche, Analyse und Befragung sozialwissenschaftlicher Paper per Claude-API.
 

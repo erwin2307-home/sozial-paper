@@ -61,3 +61,31 @@ def test_build_workbook_sanitizes_formula_injection():
     assert row[COLUMNS.index("ergebnisse")] in ("", None), "None should be converted to empty"
     assert row[COLUMNS.index("limitationen")] in ("", None), "empty string should be preserved"
     assert row[COLUMNS.index("implikationen")] == "123 normal", "numeric-starting text should not be modified"
+
+
+def test_build_workbook_keeps_int_year_as_int_not_stringified():
+    papers = [
+        {"title": "Paper A", "authors": "Max Muster", "year": 2021, "source": "upload", "report": None},
+    ]
+    xlsx_bytes = build_workbook(papers)
+    wb = openpyxl.load_workbook(BytesIO(xlsx_bytes))
+    ws = wb.active
+    row = [cell.value for cell in ws[2]]
+    year_value = row[COLUMNS.index("year")]
+    assert year_value == 2021
+    assert isinstance(year_value, int), f"year should round-trip as int, got {type(year_value)}"
+
+
+def test_build_workbook_includes_mode_used_column():
+    papers = [
+        {"title": "Paper A", "authors": "Max Muster", "year": 2021, "source": "upload",
+         "mode_used": "B", "report": {"forschungsfrage": "Frage A"}},
+    ]
+    xlsx_bytes = build_workbook(papers)
+    wb = openpyxl.load_workbook(BytesIO(xlsx_bytes))
+    ws = wb.active
+    assert "mode_used" in COLUMNS
+    header = [cell.value for cell in ws[1]]
+    assert header == COLUMNS
+    row = [cell.value for cell in ws[2]]
+    assert row[COLUMNS.index("mode_used")] == "B"

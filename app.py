@@ -1,3 +1,7 @@
+import re
+
+import anthropic
+import requests
 import streamlit as st
 
 from modules import auth, library_state, pdf_extract, search_aggregator
@@ -15,6 +19,10 @@ def _init_state():
         st.session_state.authenticated = False
     if "mode" not in st.session_state:
         st.session_state.mode = "A"
+
+
+def _escape_md(text) -> str:
+    return str(text).replace("[", "\\[").replace("]", "\\]").replace("(", "\\(").replace(")", "\\)")
 
 
 def login_page():
@@ -55,19 +63,34 @@ def search_page():
     for col, (key, label) in zip(cols, labels):
         if col.checkbox(label, value=(key == "semanticscholar")):
             sources.append(key)
-    if st.button("Suchen") and query and sources:
-        api_keys = {"core": st.secrets.get("CORE_API_KEY", "")}
-        st.session_state.search_results = search_aggregator.aggregate(query, sources, api_keys)
+    if st.button("Suchen"):
+        if not query or not sources:
+            st.warning("Bitte Suchbegriff eingeben und mindestens eine Quelle auswaehlen.")
+        else:
+            api_keys = {"core": st.secrets.get("CORE_API_KEY", "")}
+            st.session_state.search_results = search_aggregator.aggregate(query, sources, api_keys)
+    if "search_results" in st.session_state and not st.session_state.search_results:
+        st.info("Keine Treffer.")
     for item in st.session_state.get("search_results", []):
-        with st.expander(f"{item['title']} ({item.get('year', '?')})"):
-            st.write(item.get("abstract", ""))
-            if st.button("In Bibliothek uebernehmen", key=f"add_{item['id']}"):
+        if not item.get("id"):
+            continue
+        with st.expander(f"{_escape_md(item['title'])} ({item.get('year', '?')})"):
+            st.text(item.get("abstract", ""))
+            if st.button("In Bibliothek uebernehmen", key=f"add_{item['source']}_{item['id']}"):
                 paper = library_state.Paper(
                     id=item["id"], title=item["title"], authors=item["authors"],
                     year=item.get("year"), source=item["source"], abstract=item.get("abstract", ""),
                     pdf_url=item.get("pdf_url"),
                 )
                 library_state.add_paper(st.session_state.library, paper)
+                if paper.pdf_url:
+                    try:
+                        resp = requests.get(paper.pdf_url, timeout=30)
+                        resp.raise_for_status()
+                        text, status = pdf_extract.extract_text(resp.content)
+                    except Exception:
+                        text, status = "", "failed"
+                    library_state.set_full_text(st.session_state.library, paper.id, text, status)
                 st.success("Hinzugefuegt.")
 
 
@@ -75,6 +98,8 @@ def upload_page():
     st.header("Upload")
     uploaded = st.file_uploader("PDF hochladen", type=["pdf"], accept_multiple_files=True)
     for file in uploaded or []:
+        if library_state.get_paper(st.session_state.library, file.name) is not None:
+            continue
         full_text, status = pdf_extract.extract_text(file.getvalue())
         paper = library_state.Paper(
             id=file.name, title=file.name, source="upload",
@@ -88,7 +113,7 @@ def library_page():
     st.header("Bibliothek")
     st.session_state.library_view = st.radio("Ansicht", ["Einzel-Paper", "Mehrere/Vergleich"])
     for paper in library_state.list_papers(st.session_state.library):
-        st.write(f"**{paper.title}** — {paper.source} — Status: {paper.extract_status}")
+        st.write(f"**{_escape_md(paper.title)}** — {paper.source} — Status: {paper.extract_status}")
 
 
 def _get_selected_paper():
@@ -110,13 +135,20 @@ def analysis_page():
         st.warning("Kein Volltext verfuegbar (PDF nicht extrahierbar).")
         return
     if st.button("Analysieren"):
-        client = get_client(st.secrets["CLAUDE_API_KEY"])
         use_mode_b = st.session_state.mode == "B" or qa_engine.is_too_long_for_direct(paper.full_text)
         if st.session_state.mode == "A" and use_mode_b:
             st.warning("Paper zu lang fuer Direkt-Modus, nutze RAG-Modus.")
-        report = analysis_ragpipeline.analyze(paper.full_text, client) if use_mode_b else analysis_direct.analyze(paper.full_text, client)
-        library_state.set_report(st.session_state.library, paper.id, report, "B" if use_mode_b else "A")
-        st.success("Analyse abgeschlossen.")
+        try:
+            client = get_client(st.secrets["CLAUDE_API_KEY"])
+            report = analysis_ragpipeline.analyze(paper.full_text, client) if use_mode_b else analysis_direct.analyze(paper.full_text, client)
+            library_state.set_report(st.session_state.library, paper.id, report, "B" if use_mode_b else "A")
+            st.success("Analyse abgeschlossen.")
+        except KeyError:
+            st.error("CLAUDE_API_KEY ist nicht konfiguriert.")
+        except anthropic.RateLimitError:
+            st.error("Claude-API-Limit erreicht. Bitte in einigen Minuten erneut versuchen.")
+        except anthropic.APIError as exc:
+            st.error(f"Claude-API-Fehler: {type(exc).__name__}. Bitte erneut versuchen.")
     if paper.report:
         st.json(paper.report)
 
@@ -128,9 +160,19 @@ def qa_page():
         return
     question = st.text_input("Frage zum Paper")
     if st.button("Fragen") and question:
-        client = get_client(st.secrets["CLAUDE_API_KEY"])
-        answer = qa_engine.answer_question(paper.full_text, question, st.session_state.mode, client)
-        st.write(answer)
+        effective_mode = "B" if (st.session_state.mode == "B" or qa_engine.is_too_long_for_direct(paper.full_text)) else "A"
+        if st.session_state.mode == "A" and effective_mode == "B":
+            st.warning("Paper zu lang fuer Direkt-Modus, nutze RAG-Modus.")
+        try:
+            client = get_client(st.secrets["CLAUDE_API_KEY"])
+            answer = qa_engine.answer_question(paper.full_text, question, effective_mode, client)
+            st.write(answer)
+        except KeyError:
+            st.error("CLAUDE_API_KEY ist nicht konfiguriert.")
+        except anthropic.RateLimitError:
+            st.error("Claude-API-Limit erreicht. Bitte in einigen Minuten erneut versuchen.")
+        except anthropic.APIError as exc:
+            st.error(f"Claude-API-Fehler: {type(exc).__name__}. Bitte erneut versuchen.")
 
 
 def export_page():
@@ -139,12 +181,20 @@ def export_page():
     if not papers:
         st.info("Bibliothek ist leer.")
         return
-    if st.session_state.get("library_view") == "Einzel-Paper":
-        paper = papers[0]
-        if paper.report:
-            pdf_bytes = export_pdf.build_report_pdf(paper.title, paper.report)
-            st.download_button("PDF herunterladen", pdf_bytes, file_name=f"{paper.title}.pdf")
-    rows = [{"title": p.title, "authors": p.authors, "year": p.year, "source": p.source, "report": p.report} for p in papers]
+    st.subheader("Einzelbericht (PDF)")
+    paper = _get_selected_paper()
+    if paper is not None and paper.report:
+        safe_title = re.sub(r"[^\w\-. ]", "_", paper.title)[:80]
+        pdf_bytes = export_pdf.build_report_pdf(paper.title, paper.report)
+        st.download_button("PDF herunterladen", pdf_bytes, file_name=f"{safe_title}.pdf")
+    st.subheader("Vergleichstabelle (Excel)")
+    rows = [
+        {
+            "title": p.title, "authors": p.authors, "year": p.year, "source": p.source,
+            "mode_used": p.mode_used, "report": p.report,
+        }
+        for p in papers
+    ]
     xlsx_bytes = export_excel.build_workbook(rows)
     st.download_button("Excel herunterladen", xlsx_bytes, file_name="bericht.xlsx")
 

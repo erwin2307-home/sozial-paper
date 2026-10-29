@@ -3,3 +3,6 @@ base = "light"
 
 [server]
 maxUploadSize = 50
+
+[client]
+showErrorDetails = false
