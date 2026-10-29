@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from modules.export_pdf import build_report_pdf, _sanitize
+from modules.export_pdf import build_report_pdf, build_text_report_pdf, _sanitize
 
 def test_build_report_pdf_returns_valid_pdf_bytes():
     report = {
@@ -38,3 +38,12 @@ def test_sanitize_converts_smart_quotes_to_ascii_not_question_marks():
     # curly characters survive either.
     for curly in ("‘", "’", "“", "”", "„", "–", "—", "…"):
         assert curly not in result
+
+
+def test_build_text_report_pdf_returns_valid_pdf_bytes():
+    pdf_bytes = build_text_report_pdf(
+        "Aufgabe: Diversitaet und Intersektionalitaet",
+        "Dies ist ein Fliesstext mit Umlauten: äöüß und mehreren Saetzen. " * 5,
+    )
+    assert pdf_bytes.startswith(b"%PDF")
+    assert len(pdf_bytes) > 500

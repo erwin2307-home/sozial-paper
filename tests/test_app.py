@@ -420,3 +420,50 @@ def test_library_page_escapes_markdown_in_title():
     at.run()
     _goto(at, "Bibliothek")
     assert any("\\[click me\\]\\(http://phish.example\\)" in m.value for m in at.markdown)
+
+
+# ---------------------------------------------------------------------------
+# Aufgaben: custom-question report generation (preset + personal-text merge).
+# ---------------------------------------------------------------------------
+
+def test_aufgaben_preset_generates_result_and_download_button():
+    at = _login({"APP_PASSWORD": "geheim123", "CLAUDE_API_KEY": "sk-test"})
+    at.session_state["library"] = _library_with_paper()
+    at.run()
+    _goto(at, "Aufgaben")
+    with patch("modules.custom_report.answer_questions", return_value="Generierte Antwort.") as mock_answer:
+        erstellen = [b for b in at.button if b.label == "Bericht erstellen"][0]
+        erstellen.click().run()
+    assert not at.exception
+    questions_arg, _context_arg, language_arg, _client_arg = mock_answer.call_args[0]
+    assert len(questions_arg) == 3
+    assert language_arg == "de"
+    assert any("Generierte Antwort." in t.value for t in at.text_area)
+    assert any(b.label == "PDF herunterladen" for b in at.download_button)
+
+
+def test_aufgaben_merges_personal_text_into_result():
+    at = _login({"APP_PASSWORD": "geheim123", "CLAUDE_API_KEY": "sk-test"})
+    at.session_state["library"] = _library_with_paper()
+    at.run()
+    _goto(at, "Aufgaben")
+    ergaenzung = [t for t in at.text_area if t.label == "Eigene Ergaenzung (z.B. persoenliche Perspektive)"][0]
+    ergaenzung.input("Mein persoenlicher Text.").run()
+    with patch("modules.custom_report.answer_questions", return_value="KI-Antwort."):
+        erstellen = [b for b in at.button if b.label == "Bericht erstellen"][0]
+        erstellen.click().run()
+    assert not at.exception
+    ergebnis = [t for t in at.text_area if t.label == "Ergebnis"][0]
+    assert "KI-Antwort." in ergebnis.value
+    assert "Mein persoenlicher Text." in ergebnis.value
+
+
+def test_aufgaben_missing_api_key_shows_error_not_exception():
+    at = _login({"APP_PASSWORD": "geheim123"})  # no CLAUDE_API_KEY secret
+    at.session_state["library"] = _library_with_paper()
+    at.run()
+    _goto(at, "Aufgaben")
+    erstellen = [b for b in at.button if b.label == "Bericht erstellen"][0]
+    erstellen.click().run()
+    assert not at.exception
+    assert any("CLAUDE_API_KEY ist nicht konfiguriert" in e.value for e in at.error)

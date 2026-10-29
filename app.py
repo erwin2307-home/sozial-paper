@@ -10,6 +10,7 @@ import streamlit as st
 from modules import auth, library_state, pdf_extract, search_aggregator
 from modules import analysis_direct, analysis_ragpipeline, qa_engine
 from modules import export_excel, export_pdf
+from modules import custom_report, docx_extract
 from modules.claude_client import get_client
 
 st.set_page_config(page_title="Sozialwissenschafts-Paper-Analyse", layout="wide")
@@ -65,11 +66,13 @@ def sidebar_nav() -> str:
             "Verarbeitungsmodus", ["A", "B"],
             index=0 if st.session_state.mode == "A" else 1, horizontal=True,
         )
-        page = st.radio("Bereich", ["Suche", "Upload", "Bibliothek", "Analyse", "Q&A", "Export"])
+        page = st.radio("Bereich", ["Suche", "Upload", "Bibliothek", "Analyse", "Q&A", "Aufgaben", "Export"])
         if st.button("Logout"):
             st.session_state.library = library_state.Library()
             st.session_state.pop("search_results", None)
             st.session_state.pop("library_view", None)
+            st.session_state.pop("aufgaben_raw_text", None)
+            st.session_state.pop("aufgaben_result", None)
             st.session_state.mode = "A"
             st.session_state.authenticated = False
             st.rerun()
@@ -202,6 +205,70 @@ def qa_page():
             st.error(f"Claude-API-Fehler: {type(exc).__name__}. Bitte erneut versuchen.")
 
 
+def aufgaben_page():
+    st.header("Aufgaben")
+    paper = _get_selected_paper()
+    if paper is None:
+        return
+    if not paper.full_text:
+        st.warning("Kein Volltext verfuegbar (PDF nicht extrahierbar).")
+        return
+
+    source = st.radio(
+        "Fragen-Quelle",
+        ["Vorlage: Diversitaet & Intersektionalitaet", "Eigenes Fragen-Dokument hochladen"],
+    )
+    questions = None
+    if source.startswith("Vorlage"):
+        questions = custom_report.PRESET_TRANSKULTURALITAET
+    else:
+        question_file = st.file_uploader("Fragen-Dokument (.docx oder .pdf)", type=["docx", "pdf"])
+        if question_file is not None:
+            if question_file.name.lower().endswith(".docx"):
+                raw_text, status = docx_extract.extract_text(question_file.getvalue())
+            else:
+                raw_text, status = pdf_extract.extract_text(question_file.getvalue())
+            if status == "ok":
+                st.session_state.aufgaben_raw_text = raw_text
+            else:
+                st.warning("Fragen-Dokument konnte nicht gelesen werden.")
+
+    language = st.selectbox(
+        "Sprache", ["de", "en", "tr"],
+        format_func=lambda code: custom_report.LANGUAGE_NAMES[code],
+    )
+    personal_text = st.text_area("Eigene Ergaenzung (z.B. persoenliche Perspektive)")
+
+    if st.button("Bericht erstellen"):
+        try:
+            client = get_client(st.secrets["CLAUDE_API_KEY"])
+            active_questions = questions
+            if active_questions is None:
+                raw_text = st.session_state.get("aufgaben_raw_text", "")
+                if not raw_text:
+                    st.warning("Bitte zuerst ein Fragen-Dokument hochladen.")
+                    return
+                active_questions = custom_report.extract_questions_from_text(raw_text, client)
+            answer = custom_report.answer_questions(active_questions, paper.full_text, language, client)
+            final_text = answer
+            if personal_text.strip():
+                final_text = f"{answer}\n\n{personal_text.strip()}"
+            st.session_state.aufgaben_result = final_text
+        except KeyError:
+            st.error("CLAUDE_API_KEY ist nicht konfiguriert.")
+        except anthropic.RateLimitError:
+            st.error("Claude-API-Limit erreicht. Bitte in einigen Minuten erneut versuchen.")
+        except anthropic.APIError as exc:
+            st.error(f"Claude-API-Fehler: {type(exc).__name__}. Bitte erneut versuchen.")
+
+    if st.session_state.get("aufgaben_result"):
+        st.text_area("Ergebnis", st.session_state.aufgaben_result, height=300)
+        pdf_bytes = export_pdf.build_text_report_pdf(
+            "Aufgabe: Diversitaet und Intersektionalitaet", st.session_state.aufgaben_result,
+        )
+        st.download_button("PDF herunterladen", pdf_bytes, file_name="aufgabe_bericht.pdf")
+
+
 def export_page():
     st.header("Export")
     papers = library_state.list_papers(st.session_state.library)
@@ -234,7 +301,7 @@ def main():
     page = sidebar_nav()
     pages = {
         "Suche": search_page, "Upload": upload_page, "Bibliothek": library_page,
-        "Analyse": analysis_page, "Q&A": qa_page, "Export": export_page,
+        "Analyse": analysis_page, "Q&A": qa_page, "Aufgaben": aufgaben_page, "Export": export_page,
     }
     pages[page]()
 

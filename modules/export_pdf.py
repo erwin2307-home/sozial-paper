@@ -43,3 +43,14 @@ def build_report_pdf(title: str, report: dict) -> bytes:
         pdf.multi_cell(190, 8, _sanitize(report.get(field, "nicht angegeben")))
         pdf.ln(2)
     return bytes(pdf.output())
+
+
+def build_text_report_pdf(title: str, body_text: str) -> bytes:
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.multi_cell(190, 10, _sanitize(title))
+    pdf.ln(2)
+    pdf.set_font("Helvetica", "", 12)
+    pdf.multi_cell(190, 8, _sanitize(body_text))
+    return bytes(pdf.output())
