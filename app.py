@@ -1,4 +1,7 @@
+import ipaddress
 import re
+import socket
+from urllib.parse import urlparse
 
 import anthropic
 import requests
@@ -23,6 +26,25 @@ def _init_state():
 
 def _escape_md(text) -> str:
     return str(text).replace("[", "\\[").replace("]", "\\]").replace("(", "\\(").replace(")", "\\)")
+
+
+def _is_safe_pdf_url(url: str) -> bool:
+    """Reject URLs that resolve to private/loopback/link-local/reserved IPs.
+
+    Prevents SSRF via a malicious pdf_url returned by a third-party search
+    API (e.g. a cloud metadata endpoint or an internal service address).
+    """
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            return False
+        for info in socket.getaddrinfo(parsed.hostname, None):
+            ip = ipaddress.ip_address(info[4][0])
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+                return False
+        return True
+    except Exception:
+        return False
 
 
 def login_page():
@@ -83,11 +105,16 @@ def search_page():
                     pdf_url=item.get("pdf_url"),
                 )
                 library_state.add_paper(st.session_state.library, paper)
-                if paper.pdf_url:
+                if paper.pdf_url and _is_safe_pdf_url(paper.pdf_url):
                     try:
-                        resp = requests.get(paper.pdf_url, timeout=30)
-                        resp.raise_for_status()
-                        text, status = pdf_extract.extract_text(resp.content)
+                        resp = requests.get(paper.pdf_url, timeout=30, allow_redirects=False)
+                        if resp.is_redirect:
+                            # A validated URL could still redirect to an internal
+                            # address; never follow it, just treat as failed.
+                            text, status = "", "failed"
+                        else:
+                            resp.raise_for_status()
+                            text, status = pdf_extract.extract_text(resp.content)
                     except Exception:
                         text, status = "", "failed"
                     library_state.set_full_text(st.session_state.library, paper.id, text, status)

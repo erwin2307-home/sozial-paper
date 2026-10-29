@@ -135,12 +135,14 @@ def test_search_add_paper_downloads_and_extracts_pdf():
     at.run()
     fake_resp = MagicMock()
     fake_resp.content = b"%PDF-fake"
+    fake_resp.is_redirect = False
     fake_resp.raise_for_status = MagicMock()
-    with patch("app.requests.get", return_value=fake_resp) as mock_get, \
+    with patch("socket.getaddrinfo", return_value=[(2, 0, 0, "", ("93.184.216.34", 0))]), \
+         patch("app.requests.get", return_value=fake_resp) as mock_get, \
          patch("app.pdf_extract.extract_text", return_value=("extrahierter Text", "ok")):
         add_btn = [b for b in at.button if b.label == "In Bibliothek uebernehmen"][0]
         add_btn.click().run()
-    mock_get.assert_called_once_with("http://example.com/x.pdf", timeout=30)
+    mock_get.assert_called_once_with("http://example.com/x.pdf", timeout=30, allow_redirects=False)
     lib = at.session_state["library"]
     paper = library_state.get_paper(lib, "abc123")
     assert paper is not None
@@ -163,6 +165,73 @@ def test_search_add_paper_without_pdf_url_leaves_full_text_none():
     paper = library_state.get_paper(lib, "noeurl")
     assert paper.full_text is None
     assert paper.extract_status == "pending"
+
+
+# ---------------------------------------------------------------------------
+# SSRF addendum: pdf_url from a third-party search API must be validated
+# before the server-side fetch (reject private/loopback/link-local/reserved
+# IPs and non-http(s) schemes), so a malicious API response can't make the
+# app fetch an internal/metadata address.
+# ---------------------------------------------------------------------------
+
+def test_search_add_paper_with_public_ip_pdf_url_proceeds_with_fetch():
+    at = _login({"APP_PASSWORD": "geheim123"})
+    _goto(at, "Suche")
+    fake_results = [{
+        "id": "pub1", "title": "Public", "authors": "A", "year": 2020,
+        "abstract": "x", "pdf_url": "http://example.com/x.pdf", "source": "semanticscholar",
+    }]
+    at.session_state["search_results"] = fake_results
+    at.run()
+    fake_resp = MagicMock()
+    fake_resp.is_redirect = False
+    fake_resp.raise_for_status = MagicMock()
+    with patch("socket.getaddrinfo", return_value=[(2, 0, 0, "", ("93.184.216.34", 0))]) as mock_dns, \
+         patch("app.requests.get", return_value=fake_resp) as mock_get, \
+         patch("app.pdf_extract.extract_text", return_value=("Text", "ok")):
+        add_btn = [b for b in at.button if b.label == "In Bibliothek uebernehmen"][0]
+        add_btn.click().run()
+    assert mock_dns.called
+    mock_get.assert_called_once_with("http://example.com/x.pdf", timeout=30, allow_redirects=False)
+    lib = at.session_state["library"]
+    paper = library_state.get_paper(lib, "pub1")
+    assert paper.full_text == "Text"
+    assert paper.extract_status == "ok"
+
+
+def test_search_add_paper_with_private_ip_pdf_url_is_blocked():
+    at = _login({"APP_PASSWORD": "geheim123"})
+    _goto(at, "Suche")
+    fake_results = [{
+        "id": "priv1", "title": "Private", "authors": "A", "year": 2020,
+        "abstract": "x", "pdf_url": "http://internal.example/x.pdf", "source": "semanticscholar",
+    }]
+    at.session_state["search_results"] = fake_results
+    at.run()
+    with patch("socket.getaddrinfo", return_value=[(2, 0, 0, "", ("127.0.0.1", 0))]), \
+         patch("app.requests.get") as mock_get:
+        add_btn = [b for b in at.button if b.label == "In Bibliothek uebernehmen"][0]
+        add_btn.click().run()
+    mock_get.assert_not_called()
+    lib = at.session_state["library"]
+    paper = library_state.get_paper(lib, "priv1")
+    assert paper.full_text is None
+    assert paper.extract_status == "pending"
+
+
+def test_search_add_paper_with_non_http_scheme_pdf_url_is_blocked():
+    at = _login({"APP_PASSWORD": "geheim123"})
+    _goto(at, "Suche")
+    fake_results = [{
+        "id": "file1", "title": "FileScheme", "authors": "A", "year": 2020,
+        "abstract": "x", "pdf_url": "file:///etc/passwd", "source": "semanticscholar",
+    }]
+    at.session_state["search_results"] = fake_results
+    at.run()
+    with patch("app.requests.get") as mock_get:
+        add_btn = [b for b in at.button if b.label == "In Bibliothek uebernehmen"][0]
+        add_btn.click().run()
+    mock_get.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
