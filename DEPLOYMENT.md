@@ -1,0 +1,14 @@
+# DEPLOYMENT.md
+
+## Deployment auf Streamlit Community Cloud
+
+1. Repo auf GitHub erstellen/pushen (Branch `main`).
+2. Auf https://share.streamlit.io neue App anlegen, Repo + Branch `main` + Entry-Point `app.py` auswaehlen.
+3. Unter "Secrets" folgende Werte eintragen:
+   ```
+   APP_PASSWORD = "dein-passwort"
+   CLAUDE_API_KEY = "sk-ant-..."
+   CORE_API_KEY = "dein-core-key"
+   ```
+4. Deploy ausloesen. Bei Aenderungen an `main` deployed Streamlit Cloud automatisch neu.
+5. Vor jedem Deploy: manuellen Smoke-Test durchfuehren (Login → Suche → Paper uebernehmen → Analyse Modus A → Q&A → Export Excel+PDF).
