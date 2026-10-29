@@ -31,6 +31,9 @@ def build_report_pdf(title: str, report: dict) -> bytes:
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Helvetica", "B", 16)
+    # fpdf2 2.8.9: multi_cell(0, ...) fails with "Not enough horizontal space" on consecutive calls
+    # because width=0 means "use remaining width on current line", and multi_cell doesn't auto-newline.
+    # Use width=190 (A4 with default margins) instead for reliable text wrapping.
     pdf.multi_cell(190, 10, _sanitize(title))
     for field in SCHEMA_FIELDS:
         pdf.set_font("Helvetica", "B", 12)
