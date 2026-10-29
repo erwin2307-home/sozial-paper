@@ -37,6 +37,10 @@ def sidebar_nav() -> str:
         )
         page = st.radio("Bereich", ["Suche", "Upload", "Bibliothek", "Analyse", "Q&A", "Export"])
         if st.button("Logout"):
+            st.session_state.library = library_state.Library()
+            st.session_state.pop("search_results", None)
+            st.session_state.pop("library_view", None)
+            st.session_state.mode = "A"
             st.session_state.authenticated = False
             st.rerun()
     return page
