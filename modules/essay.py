@@ -75,6 +75,7 @@ def build_prompt(questions: list, papers: list, language: str, personal_perspect
         "Lasse keine Frage und keinen Teil einer Frage aus.\n\n"
         f"Beginne jede Antwort in einer eigenen Zeile mit ihrer Marke, fuer Frage {numbers[0]} also "
         f"[[ANTWORT {numbers[0]}]], und verwende die Nummern aus der Fragenliste. "
+        "Schreibe reinen Text, kein Markdown und keine Ueberschriften. "
         "Wiederhole die Fragen nicht und schreibe keine Einleitung, kein Fazit "
         "und kein Literaturverzeichnis; diese Teile werden separat ergaenzt.\n\n"
         f"{perspective}"
@@ -92,12 +93,20 @@ def build_prompt(questions: list, papers: list, language: str, personal_perspect
     )
 
 
+def _strip_markdown(text: str) -> str:
+    """The exports show plain text, so Markdown syntax would be printed literally."""
+    text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^\*\s+", "- ", text, flags=re.MULTILINE)
+    text = re.sub(r"(\*\*|__)(?=\S)(.+?)(?<=\S)\1", r"\2", text)
+    return re.sub(r"(?<![\w*])\*(?=\S)([^*\n]+?)(?<=\S)\*(?![\w*])", r"\1", text)
+
+
 def _parse_answers(raw: str) -> dict:
     parts = _ANSWER_MARKER.split(raw)
     answers = {}
     for number, answer in zip(parts[1::2], parts[2::2]):
         if answer.strip():
-            answers[int(number)] = answer.strip()
+            answers[int(number)] = _strip_markdown(answer.strip())
     return answers
 
 

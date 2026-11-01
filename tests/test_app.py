@@ -4,7 +4,7 @@ import httpx
 import anthropic
 from streamlit.testing.v1 import AppTest
 
-from modules import essay, library_state
+from modules import essay, library_state, translation
 from modules.claude_client import EmptyResponseError
 
 # AppTest.from_file resolves a relative path against the directory of the
@@ -641,6 +641,113 @@ def test_aufsatz_missing_api_key_shows_error_not_exception():
     [b for b in at.button if b.label == "Aufsatz erstellen"][0].click().run()
     assert not at.exception
     assert any("CLAUDE_API_KEY ist nicht konfiguriert" in e.value for e in at.error)
+
+
+# ---------------------------------------------------------------------------
+# Translation: available on every page and shown in the app.
+# ---------------------------------------------------------------------------
+
+def _translate_buttons(at):
+    return [b for b in at.button if b.label == "Uebersetzen"]
+
+
+def test_translation_offered_on_every_page_with_a_paper():
+    at = _login({"APP_PASSWORD": "geheim123"})
+    at.session_state["library"] = _essay_library()
+    at.run()
+    for page in ["Upload", "Bibliothek", "Analyse", "Q&A", "Aufgaben", "Aufsatz", "Export"]:
+        _goto(at, page)
+        assert not at.exception, page
+        assert _translate_buttons(at), page
+
+
+def test_translation_offered_for_search_result_abstract():
+    at = _login({"APP_PASSWORD": "geheim123"})
+    _goto(at, "Suche")
+    at.session_state["search_results"] = [{
+        "id": "s1", "title": "Titel", "authors": "A", "year": 2021,
+        "abstract": "Der Abstract", "pdf_url": None, "source": "core",
+    }]
+    at.run()
+    with patch("modules.translation.translate_text",
+               return_value=translation.Translation("The abstract", translation.PROVIDER_GOOGLE)) as mock_translate:
+        _translate_buttons(at)[0].click().run()
+    assert mock_translate.call_args[0][0] == "Der Abstract"
+    assert any(t.label == "Uebersetzung" and t.value == "The abstract" for t in at.text_area)
+
+
+def test_translation_shows_result_uses_chosen_language_and_names_provider():
+    at = _login({"APP_PASSWORD": "geheim123", "GOOGLE_TRANSLATE_API_KEY": "g-key"})
+    at.session_state["library"] = _library_with_paper()
+    at.run()
+    _goto(at, "Analyse")
+    [s for s in at.selectbox if s.label == "Zielsprache"][0].select("tr").run()
+    with patch("modules.translation.translate_text",
+               return_value=translation.Translation("Tam metin", translation.PROVIDER_GOOGLE)) as mock_translate:
+        _translate_buttons(at)[0].click().run()
+    assert not at.exception
+    args, kwargs = mock_translate.call_args
+    assert args[0] == "Volltext " * 10
+    assert args[1] == "tr"
+    assert kwargs["service"] == translation.SERVICE_GOOGLE_CLOUD
+    assert kwargs["google_key"] == "g-key"
+    assert any(t.label == "Uebersetzung" and t.value == "Tam metin" for t in at.text_area)
+    assert any(translation.PROVIDER_GOOGLE in c.value for c in at.caption)
+
+
+def test_translation_defaults_to_free_service_without_claude_client():
+    at = _login({"APP_PASSWORD": "geheim123", "CLAUDE_API_KEY": "sk-test"})
+    at.session_state["library"] = _library_with_paper()
+    at.run()
+    _goto(at, "Analyse")
+    with patch("modules.translation.translate_text",
+               return_value=translation.Translation("x", translation.PROVIDER_MYMEMORY)) as mock_translate:
+        _translate_buttons(at)[0].click().run()
+    assert mock_translate.call_args.kwargs["service"] == translation.SERVICE_FREE
+    assert mock_translate.call_args.kwargs["client"] is None
+
+
+def test_translation_offers_claude_as_paid_choice():
+    at = _login({"APP_PASSWORD": "geheim123", "CLAUDE_API_KEY": "sk-test"})
+    at.session_state["library"] = _library_with_paper()
+    at.run()
+    _goto(at, "Analyse")
+    [s for s in at.selectbox if s.label == "Uebersetzer"][0].select(translation.SERVICE_CLAUDE).run()
+    with patch("modules.translation.translate_text",
+               return_value=translation.Translation("x", translation.PROVIDER_CLAUDE)) as mock_translate:
+        _translate_buttons(at)[0].click().run()
+    assert mock_translate.call_args.kwargs["service"] == translation.SERVICE_CLAUDE
+    assert mock_translate.call_args.kwargs["client"] is not None
+
+
+def test_translation_warns_when_daily_limit_cut_it_short():
+    at = _login({"APP_PASSWORD": "geheim123"})
+    at.session_state["library"] = _library_with_paper()
+    at.run()
+    _goto(at, "Analyse")
+    partial = translation.Translation("Teil", translation.PROVIDER_MYMEMORY, complete=False)
+    with patch("modules.translation.translate_text", return_value=partial):
+        _translate_buttons(at)[0].click().run()
+    assert any("unvollstaendig" in w.value for w in at.warning)
+
+
+def test_translation_error_is_shown_not_raised():
+    at = _login({"APP_PASSWORD": "geheim123", "GOOGLE_TRANSLATE_API_KEY": "g-key"})
+    at.session_state["library"] = _library_with_paper()
+    at.run()
+    _goto(at, "Analyse")
+    with patch("modules.translation.translate_text", side_effect=translation.TranslationError("Abgelehnt.")):
+        _translate_buttons(at)[0].click().run()
+    assert not at.exception
+    assert any("Abgelehnt." in e.value for e in at.error)
+
+
+def test_logout_clears_translations():
+    at = _login({"APP_PASSWORD": "geheim123"})
+    at.session_state["translations"] = {("p1", "tr"): translation.Translation("x", "y")}
+    at.run()
+    [b for b in at.sidebar.button if b.label == "Logout"][0].click().run()
+    assert "translations" not in at.session_state
 
 
 def test_logout_clears_essay_result():

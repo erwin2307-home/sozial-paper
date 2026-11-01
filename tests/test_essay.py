@@ -90,6 +90,17 @@ def test_generate_body_shows_every_question_with_its_answer_in_order():
     assert body == "Frage 1: Erste?\n\nAntwort 1\n\nFrage 2: Zweite?\n\nAntwort 2"
 
 
+def test_generate_body_removes_markdown_from_answers():
+    raw = "[[ANTWORT 1]]\n## Begriff\n\n**Fett** und *kursiv* und __auch__, 2 * 3 bleibt.\n\n* Punkt\n- Punkt"
+    with patch("modules.essay.call_claude", return_value=raw):
+        body = essay.generate_body(["F?"], [_full()], "de", client=object())
+    assert body == "Frage 1: F?\n\nBegriff\n\nFett und kursiv und auch, 2 * 3 bleibt.\n\n- Punkt\n- Punkt"
+
+
+def test_prompt_asks_for_plain_text_without_markdown():
+    assert "kein Markdown" in essay.build_prompt(["F?"], [_full()], "de")
+
+
 def test_generate_body_asks_again_for_skipped_question():
     with patch("modules.essay.call_claude", side_effect=[_answers(1), _answers(2)]) as mock_call:
         body = essay.generate_body(["Erste?", "Zweite?"], [_full()], "de", client=object())

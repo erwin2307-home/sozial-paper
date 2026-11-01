@@ -1,4 +1,7 @@
 # -*- coding: utf-8 -*-
+import re
+from pathlib import Path
+
 from fpdf import FPDF
 
 from modules.report_schema import SCHEMA_FIELDS
@@ -14,57 +17,48 @@ FIELD_LABELS = {
     "implikationen": "Implikationen",
 }
 
-_REPLACEMENTS = {
-    "‘": "'", "’": "'",
-    "“": '"', "”": '"', "„": '"',
-    "–": "-", "—": "-", "…": "...",
-}
+_FONT_DIR = Path(__file__).resolve().parent.parent / "content" / "fonts"
+_FONT = "DejaVu"
+_QUESTION_LINE = re.compile(r"^Frage \d+:")
 
 
-def _sanitize(text: str) -> str:
-    text = text or ""
-    for src, dst in _REPLACEMENTS.items():
-        text = text.replace(src, dst)
-    return text.encode("latin-1", errors="replace").decode("latin-1")
+def is_question_line(paragraph: str) -> bool:
+    return bool(_QUESTION_LINE.match(paragraph))
+
+
+def _new_pdf() -> FPDF:
+    pdf = FPDF()
+    # The core PDF fonts only cover Latin-1; this one also covers e.g. Turkish.
+    pdf.add_font(_FONT, "", _FONT_DIR / "DejaVuSans.ttf")
+    pdf.add_font(_FONT, "B", _FONT_DIR / "DejaVuSans-Bold.ttf")
+    pdf.add_page()
+    return pdf
+
+
+def _write(pdf: FPDF, text: str, height: float, size: int, bold: bool = False) -> None:
+    pdf.set_font(_FONT, "B" if bold else "", size)
+    # Without new_x, multi_cell leaves the cursor at the right edge and the next call draws off the page.
+    pdf.multi_cell(0, height, text or "", new_x="LMARGIN", new_y="NEXT")
 
 
 def build_report_pdf(title: str, report: dict) -> bytes:
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Helvetica", "B", 16)
-    # fpdf2 2.8.9: multi_cell(0, ...) fails with "Not enough horizontal space" on consecutive calls
-    # because width=0 means "use remaining width on current line", and multi_cell doesn't auto-newline.
-    # Use width=190 (A4 with default margins) instead for reliable text wrapping.
-    pdf.multi_cell(190, 10, _sanitize(title))
+    pdf = _new_pdf()
+    _write(pdf, title, 10, 16, bold=True)
     for field in SCHEMA_FIELDS:
-        pdf.set_font("Helvetica", "B", 12)
-        pdf.multi_cell(190, 8, _sanitize(FIELD_LABELS.get(field, field)))
-        pdf.set_font("Helvetica", "", 12)
-        pdf.multi_cell(190, 8, _sanitize(report.get(field, "nicht angegeben")))
         pdf.ln(2)
+        _write(pdf, FIELD_LABELS.get(field, field), 8, 12, bold=True)
+        _write(pdf, report.get(field, "nicht angegeben"), 7, 11)
     return bytes(pdf.output())
 
 
 def build_sections_pdf(title: str, sections: list) -> bytes:
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Helvetica", "B", 16)
-    pdf.multi_cell(190, 10, _sanitize(title))
+    pdf = _new_pdf()
+    _write(pdf, title, 10, 16, bold=True)
     for heading, body in sections:
-        pdf.ln(4)
-        pdf.set_font("Helvetica", "B", 13)
-        pdf.multi_cell(190, 8, _sanitize(heading))
-        pdf.set_font("Helvetica", "", 12)
-        pdf.multi_cell(190, 7, _sanitize(body))
-    return bytes(pdf.output())
-
-
-def build_text_report_pdf(title: str, body_text: str) -> bytes:
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Helvetica", "B", 16)
-    pdf.multi_cell(190, 10, _sanitize(title))
-    pdf.ln(2)
-    pdf.set_font("Helvetica", "", 12)
-    pdf.multi_cell(190, 8, _sanitize(body_text))
+        pdf.ln(5)
+        _write(pdf, heading, 8, 13, bold=True)
+        for paragraph in re.split(r"\n\s*\n", body or ""):
+            if paragraph.strip():
+                pdf.ln(2)
+                _write(pdf, paragraph.strip(), 6, 11, bold=is_question_line(paragraph))
     return bytes(pdf.output())

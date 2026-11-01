@@ -3,6 +3,8 @@ from io import BytesIO
 
 from docx import Document
 
+from modules.export_pdf import is_question_line
+
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 
 
@@ -17,7 +19,8 @@ def build_docx(title: str, sections: list) -> bytes:
         document.add_heading(_clean(heading), level=1)
         for paragraph in re.split(r"\n\s*\n", _clean(body)):
             if paragraph.strip():
-                document.add_paragraph(paragraph.strip())
+                run = document.add_paragraph().add_run(paragraph.strip())
+                run.bold = is_question_line(paragraph) or None
     buffer = BytesIO()
     document.save(buffer)
     return buffer.getvalue()

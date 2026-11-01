@@ -12,3 +12,10 @@ def test_build_docx_contains_title_headings_and_paragraphs_in_order():
     texts = [p.text for p in doc.paragraphs]
     assert texts == ["Mein Titel", "Abstract", "Absatz eins.", "Absatz zwei.", "Schlusswort", "Ende ş mit Steuerzeichen"]
     assert doc.paragraphs[1].style.name == "Heading 1"
+
+
+def test_build_docx_sets_question_lines_in_bold():
+    doc = Document(BytesIO(build_docx("T", [("Hauptteil", "Frage 1: Was gilt?\n\nDie Antwort.")])))
+    by_text = {p.text: p for p in doc.paragraphs}
+    assert by_text["Frage 1: Was gilt?"].runs[0].bold is True
+    assert not by_text["Die Antwort."].runs[0].bold

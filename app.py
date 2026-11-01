@@ -7,7 +7,7 @@ import streamlit as st
 from modules import auth, jats_extract, library_state, paper_download, pdf_extract, search_aggregator
 from modules import analysis_direct, analysis_ragpipeline, qa_engine
 from modules import export_excel, export_pdf, export_word
-from modules import custom_report, docx_extract, essay
+from modules import custom_report, docx_extract, essay, translation
 from modules.claude_client import EmptyResponseError, get_client
 
 st.set_page_config(page_title="Sozialwissenschafts-Paper-Analyse", layout="wide")
@@ -30,6 +30,51 @@ def _escape_md(text) -> str:
 
 def _safe_filename(title: str) -> str:
     return re.sub(r"[^\w\-. ]", "_", title)[:80]
+
+
+def _translation_panel(scope: str, item_id: str, text: str):
+    """Language choice, translate button and result; shared by every page."""
+    language = st.selectbox(
+        "Zielsprache", list(translation.LANGUAGES), format_func=lambda code: translation.LANGUAGES[code],
+        key=f"translate_lang_{scope}_{item_id}",
+    )
+    google_key = st.secrets.get("GOOGLE_TRANSLATE_API_KEY", "")
+    claude_key = st.secrets.get("CLAUDE_API_KEY", "")
+    services = [translation.SERVICE_FREE]
+    if google_key:
+        services.insert(0, translation.SERVICE_GOOGLE_CLOUD)
+    if claude_key:
+        services.append(translation.SERVICE_CLAUDE)
+    service = st.selectbox("Uebersetzer", services, key=f"translate_service_{scope}_{item_id}")
+    translations = st.session_state.setdefault("translations", {})
+    if st.button("Uebersetzen", key=f"translate_btn_{scope}_{item_id}"):
+        progress = st.progress(0.0)
+        try:
+            client = get_client(claude_key) if service == translation.SERVICE_CLAUDE else None
+            translations[(item_id, language)] = translation.translate_text(
+                text, language, service=service, google_key=google_key, client=client,
+                mymemory_email=st.secrets.get("MYMEMORY_EMAIL", ""), on_progress=progress.progress,
+            )
+        except (translation.TranslationError, EmptyResponseError) as exc:
+            st.error(str(exc))
+        except anthropic.RateLimitError:
+            st.error("Claude-API-Limit erreicht. Bitte in einigen Minuten erneut versuchen.")
+        except anthropic.APIError as exc:
+            st.error(f"Claude-API-Fehler: {type(exc).__name__}. Bitte erneut versuchen.")
+        progress.empty()
+    result = translations.get((item_id, language))
+    if result:
+        st.caption(f"Uebersetzt mit {result.provider}. Maschinelle Uebersetzung, bitte vor dem Zitieren pruefen.")
+        if not result.complete:
+            st.warning("Uebersetzung unvollstaendig: Das kostenlose Tageslimit wurde erreicht.")
+        st.text_area("Uebersetzung", result.text, height=300, key=f"translate_out_{scope}_{item_id}_{language}")
+
+
+def _translation_expander(scope: str, paper):
+    text, kind = library_state.usable_text(paper)
+    if kind != "none":
+        with st.expander(f"Uebersetzen: {_escape_md(paper.title)} ({TEXT_KIND_LABELS[kind]})"):
+            _translation_panel(scope, paper.id, text)
 
 
 def login_page():
@@ -58,6 +103,7 @@ def sidebar_nav() -> str:
             st.session_state.pop("aufgaben_raw_text", None)
             st.session_state.pop("aufgaben_result", None)
             st.session_state.pop("essay_result", None)
+            st.session_state.pop("translations", None)
             st.session_state.mode = "A"
             st.session_state.authenticated = False
             st.rerun()
@@ -86,6 +132,8 @@ def search_page():
             continue
         with st.expander(f"{_escape_md(item['title'])} ({item.get('year', '?')})"):
             st.text(item.get("abstract", ""))
+            if item.get("abstract"):
+                _translation_panel("search", f"{item['source']}_{item['id']}", item["abstract"])
             if st.button("In Bibliothek uebernehmen", key=f"add_{item['source']}_{item['id']}"):
                 paper = library_state.Paper(
                     id=item["id"], title=item["title"], authors=item["authors"],
@@ -128,6 +176,9 @@ def upload_page():
         )
         library_state.add_paper(st.session_state.library, paper)
         st.success(f"{file.name}: {status}")
+    for paper in library_state.list_papers(st.session_state.library):
+        if paper.source == "upload":
+            _translation_expander("upload", paper)
 
 
 def library_page():
@@ -145,6 +196,7 @@ def library_page():
                 "PDF speichern", paper.pdf_bytes, file_name=f"{_safe_filename(paper.title)}.pdf",
                 mime="application/pdf", key=f"pdf_{paper.id}",
             )
+        _translation_expander("library", paper)
 
 
 def _paper_text_or_warn(paper) -> str:
@@ -210,6 +262,7 @@ def analysis_page():
     text = _paper_text_or_warn(paper)
     if not text:
         return
+    _translation_expander("analysis", paper)
     if st.button("Analysieren"):
         use_mode_b = st.session_state.mode == "B" or qa_engine.is_too_long_for_direct(text)
         if st.session_state.mode == "A" and use_mode_b:
@@ -239,6 +292,7 @@ def qa_page():
     text = _paper_text_or_warn(paper)
     if not text:
         return
+    _translation_expander("qa", paper)
     question = st.text_input("Frage zum Paper")
     if st.button("Fragen") and question:
         effective_mode = "B" if (st.session_state.mode == "B" or qa_engine.is_too_long_for_direct(text)) else "A"
@@ -267,6 +321,7 @@ def aufgaben_page():
     if not text:
         return
 
+    _translation_expander("aufgaben", paper)
     _report_form([paper], "Aufgabe", "Bericht erstellen", "aufgaben_result", "Ergebnis")
 
 
@@ -281,6 +336,7 @@ def aufsatz_page():
     for paper in papers:
         _, kind = library_state.usable_text(paper)
         st.write(f"- {_escape_md(paper.title)} ({TEXT_KIND_LABELS[kind]})")
+        _translation_expander("aufsatz", paper)
 
     _report_form(papers, "Aufsatz", "Aufsatz erstellen", "essay_result", "Aufsatz")
 
@@ -310,7 +366,7 @@ def _report_form(papers, default_title, button_label, result_key, result_label):
                     active_questions, papers, language, client, personal_perspective=personal_perspective,
                 )
             st.session_state[result_key] = {
-                "title": title, "language": language,
+                "title": title,
                 "sections": essay.build_sections(body, papers, personal_text),
             }
         except KeyError:
@@ -328,8 +384,6 @@ def _report_form(papers, default_title, button_label, result_key, result_label):
         st.text_area(result_label, preview, height=400)
         if essay.MISSING_ANSWER in preview:
             st.warning("Mindestens eine Frage wurde nicht beantwortet. Bitte erneut erstellen.")
-        if result["language"] == "tr":
-            st.warning("Das PDF kann tuerkische Sonderzeichen nicht darstellen. Bitte die Word-Datei verwenden.")
         filename = _safe_filename(result["title"]) or "bericht"
         st.download_button(
             "Als PDF herunterladen", export_pdf.build_sections_pdf(result["title"], result["sections"]),
@@ -354,6 +408,8 @@ def export_page():
         safe_title = _safe_filename(paper.title)
         pdf_bytes = export_pdf.build_report_pdf(paper.title, paper.report)
         st.download_button("PDF herunterladen", pdf_bytes, file_name=f"{safe_title}.pdf")
+    if paper is not None:
+        _translation_expander("export", paper)
     st.subheader("Vergleichstabelle (Excel)")
     rows = [
         {

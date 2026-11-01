@@ -15,7 +15,7 @@ python -m pytest tests/test_auth.py               # one file
 python -m pytest tests/test_app.py -k login       # by name
 ```
 
-There is no linter or build step. Local secrets go in `.streamlit/secrets.toml` (gitignored): `APP_PASSWORD`, `CLAUDE_API_KEY`, `CORE_API_KEY`.
+There is no linter or build step. Local secrets go in `.streamlit/secrets.toml` (gitignored): `APP_PASSWORD`, `CLAUDE_API_KEY`, `CORE_API_KEY`, optionally `GOOGLE_TRANSLATE_API_KEY` and `MYMEMORY_EMAIL`.
 
 ## Architecture
 
@@ -33,6 +33,10 @@ There is no linter or build step. Local secrets go in `.streamlit/secrets.toml` 
 - Mode A (`analysis_direct`) sends the full text to Claude. Mode B (`analysis_ragpipeline`) sends BM25-retrieved chunks; there are no embeddings or vector store.
 - `app.py` falls back from A to B when `qa_engine.is_too_long_for_direct` is true (over 400,000 characters). The check is in the page functions, not the engines.
 - All Claude calls go through `claude_client.call_claude`, which also sets the model (`DEFAULT_MODEL`). API errors are caught per page in `app.py`, and each page has its own copy of the `try/except`.
+
+**Translation**
+
+`_translation_panel` appears on every page, and the UI names the provider. The default free service tries Google's undocumented `gtx` endpoint, which can answer with a 429 block page, and then falls back to MyMemory (500 characters per request, daily quota), returning a partial result marked `complete=False` when the quota runs out. Google Cloud (`GOOGLE_TRANSLATE_API_KEY`) and Claude are selectable. Argos and Transformers were rejected because they pull in torch.
 
 **Report schema**
 
@@ -58,7 +62,6 @@ Each `search_*` module exposes `search(query, api_key=None)` and returns dicts w
 
 ## Gotchas
 
-- PDF export uses a core Helvetica font, so `export_pdf._sanitize` forces text to Latin-1. Unsupported characters become `?`, including Turkish `ş`, `ğ`, and `ı` from the Aufgaben language option.
-- `multi_cell` uses an explicit width of 190 because `0` fails on consecutive calls in fpdf2 2.8.9.
+- PDF export embeds the DejaVu fonts from `content/fonts` so non-Latin-1 text such as Turkish renders. Go through `export_pdf._write`: bare `multi_cell` leaves the cursor at the right edge, and the next call draws off the page while its text still extracts fine. PDF tests must therefore check positions, not only extracted text.
 - `AppTest` resolves paths relative to the test file, and a cold import of `app.py` can exceed its default 3s timeout. Keep `APP_PATH` and `DEFAULT_TIMEOUT` in `tests/test_app.py` as they are.
 - The tests address sidebar widgets by index (`at.sidebar.radio[1]` is the page selector), so adding or reordering sidebar radios breaks them.

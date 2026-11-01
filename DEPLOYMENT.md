@@ -9,6 +9,8 @@
    APP_PASSWORD = "dein-passwort"
    CLAUDE_API_KEY = "sk-ant-..."
    CORE_API_KEY = "dein-core-key"
+   GOOGLE_TRANSLATE_API_KEY = "optional, offizielle Google-Uebersetzung"
+   MYMEMORY_EMAIL = "optional, hoeheres kostenloses Tageslimit"
    ```
 4. Deploy ausloesen. Bei Aenderungen an `main` deployed Streamlit Cloud automatisch neu.
 5. Vor jedem Deploy: manuellen Smoke-Test durchfuehren (Login → Suche → Paper uebernehmen → Analyse Modus A → Q&A → Export Excel+PDF).

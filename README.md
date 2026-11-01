@@ -17,4 +17,6 @@ Lokale Secrets in `.streamlit/secrets.toml` (nicht committen):
 APP_PASSWORD = "dein-passwort"
 CLAUDE_API_KEY = "sk-ant-..."
 CORE_API_KEY = "dein-core-key"
+GOOGLE_TRANSLATE_API_KEY = "optional, offizielle Google-Uebersetzung"
+MYMEMORY_EMAIL = "optional, hoeheres kostenloses Tageslimit"
 ```
