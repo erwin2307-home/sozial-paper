@@ -73,3 +73,53 @@ def test_europepmc_search_normalizes_results():
         "id": "789", "title": "Titel D", "authors": "Tom Beispiel", "year": 2022,
         "abstract": "Abstract D", "pdf_url": None, "source": "europepmc",
     }]
+
+
+def test_europepmc_requests_core_result_type_for_abstracts():
+    with patch("modules.search_europepmc.requests.get", return_value=_mock_response({})) as mock_get:
+        search_europepmc.search("x")
+    assert mock_get.call_args.kwargs["params"]["resultType"] == "core"
+
+
+def test_europepmc_uses_open_access_pdf_link():
+    payload = {"resultList": {"result": [{
+        "id": "1", "title": "T", "fullTextUrlList": {"fullTextUrl": [
+            {"documentStyle": "html", "availabilityCode": "OA", "url": "http://example.org/a.html"},
+            {"documentStyle": "pdf", "availabilityCode": "S", "url": "http://example.org/paid.pdf"},
+            {"documentStyle": "pdf", "availabilityCode": "OA", "url": "http://example.org/a.pdf"},
+        ]},
+    }]}}
+    with patch("modules.search_europepmc.requests.get", return_value=_mock_response(payload)):
+        assert search_europepmc.search("x")[0]["pdf_url"] == "http://example.org/a.pdf"
+
+
+def test_europepmc_prefers_official_full_text_api_for_open_access_pmcid():
+    payload = {"resultList": {"result": [{
+        "id": "1", "title": "T", "pmcid": "PMC7", "isOpenAccess": "Y",
+        "fullTextUrlList": {"fullTextUrl": [
+            {"documentStyle": "pdf", "availabilityCode": "OA", "url": "https://europepmc.org/articles/PMC7?pdf=render"},
+        ]},
+    }]}}
+    with patch("modules.search_europepmc.requests.get", return_value=_mock_response(payload)):
+        assert search_europepmc.search("x")[0]["pdf_url"] == (
+            "https://www.ebi.ac.uk/europepmc/webservices/rest/PMC7/fullTextXML"
+        )
+
+
+def test_pubmed_fetches_abstract_and_pmc_pdf_link():
+    esearch = {"esearchresult": {"idlist": ["111"]}}
+    esummary = {"result": {"111": {
+        "title": "T", "articleids": [{"idtype": "pmc", "value": "PMC9"}],
+    }}}
+    efetch = Mock()
+    efetch.content = (
+        b'<?xml version="1.0"?><PubmedArticleSet><PubmedArticle><MedlineCitation>'
+        b'<PMID>111</PMID><Article><Abstract><AbstractText Label="A">Erster <i>Teil</i>.</AbstractText>'
+        b'<AbstractText>Zweiter Teil.</AbstractText></Abstract></Article>'
+        b'</MedlineCitation></PubmedArticle></PubmedArticleSet>'
+    )
+    with patch("modules.search_pubmed.requests.get",
+               side_effect=[_mock_response(esearch), _mock_response(esummary), efetch]):
+        result = search_pubmed.search("x")[0]
+    assert result["abstract"] == "Erster Teil. Zweiter Teil."
+    assert result["pdf_url"] == "https://www.ebi.ac.uk/europepmc/webservices/rest/PMC9/fullTextXML"

@@ -467,3 +467,135 @@ def test_aufgaben_missing_api_key_shows_error_not_exception():
     erstellen.click().run()
     assert not at.exception
     assert any("CLAUDE_API_KEY ist nicht konfiguriert" in e.value for e in at.error)
+
+
+# ---------------------------------------------------------------------------
+# Abstract fallback: found papers without a downloadable PDF stay usable.
+# ---------------------------------------------------------------------------
+
+def test_search_add_paper_reports_abstract_fallback_when_no_pdf():
+    at = _login({"APP_PASSWORD": "geheim123"})
+    _goto(at, "Suche")
+    at.session_state["search_results"] = [{
+        "id": "n1", "title": "Ohne PDF", "authors": "A", "year": 2021,
+        "abstract": "Der Abstract", "pdf_url": None, "source": "europepmc",
+    }]
+    at.run()
+    [b for b in at.button if b.label == "In Bibliothek uebernehmen"][0].click().run()
+    assert any("nur Abstract" in i.value for i in at.info)
+
+
+def test_search_add_paper_reads_full_text_from_jats_xml():
+    at = _login({"APP_PASSWORD": "geheim123"})
+    _goto(at, "Suche")
+    at.session_state["search_results"] = [{
+        "id": "x1", "title": "XML", "authors": "A", "year": 2021, "abstract": "Abstract",
+        "pdf_url": "https://www.ebi.ac.uk/europepmc/webservices/rest/PMC1/fullTextXML", "source": "europepmc",
+    }]
+    at.run()
+    xml = b"<article><body><p>Volltext aus XML.</p></body></article>"
+    with patch("app.paper_download.fetch_pdf", return_value=xml), \
+         patch("app.paper_download.is_safe_url", return_value=True):
+        [b for b in at.button if b.label == "In Bibliothek uebernehmen"][0].click().run()
+    paper = at.session_state["library"].papers["x1"]
+    assert paper.full_text == "Volltext aus XML."
+    assert paper.pdf_bytes is None
+
+
+def test_analysis_runs_on_abstract_when_no_full_text():
+    at = _login({"APP_PASSWORD": "geheim123", "CLAUDE_API_KEY": "sk-test"})
+    at.session_state["library"] = _library_with_paper(full_text=None, extract_status="pending", abstract="Der Abstract")
+    at.run()
+    _goto(at, "Analyse")
+    with patch("app.analysis_direct.analyze", return_value={"methodik": "x"}) as mock_analyze:
+        [b for b in at.button if b.label == "Analysieren"][0].click().run()
+    assert mock_analyze.call_args[0][0] == "Der Abstract"
+
+
+def test_analysis_blocked_without_full_text_and_abstract():
+    at = _login({"APP_PASSWORD": "geheim123", "CLAUDE_API_KEY": "sk-test"})
+    at.session_state["library"] = _library_with_paper(full_text=None, extract_status="failed")
+    at.run()
+    _goto(at, "Analyse")
+    assert not [b for b in at.button if b.label == "Analysieren"]
+    assert any("Weder Volltext noch Abstract" in w.value for w in at.warning)
+
+
+def test_library_offers_download_of_fetched_pdf():
+    at = _login({"APP_PASSWORD": "geheim123"})
+    at.session_state["library"] = _library_with_paper(pdf_bytes=b"%PDF-1")
+    at.run()
+    _goto(at, "Bibliothek")
+    assert any(b.label == "PDF speichern" for b in at.get("download_button"))
+
+
+# ---------------------------------------------------------------------------
+# Aufsatz: essay from selected papers, framed by the author's fixed texts.
+# ---------------------------------------------------------------------------
+
+def _essay_library():
+    lib = _library_with_paper(selected=True)
+    lib.papers["p2"] = library_state.Paper(id="p2", title="Gefunden", abstract="Abstract zwei", selected=True)
+    lib.papers["p3"] = library_state.Paper(id="p3", title="Nicht gewaehlt", abstract="Abstract drei")
+    return lib
+
+
+def test_library_checkbox_selects_paper_for_essay():
+    at = _login({"APP_PASSWORD": "geheim123"})
+    at.session_state["library"] = _library_with_paper()
+    at.run()
+    _goto(at, "Bibliothek")
+    at.checkbox(key="select_p1").check().run()
+    assert at.session_state["library"].papers["p1"].selected is True
+
+
+def test_library_checkbox_disabled_without_any_text():
+    at = _login({"APP_PASSWORD": "geheim123"})
+    at.session_state["library"] = _library_with_paper(full_text=None)
+    at.run()
+    _goto(at, "Bibliothek")
+    assert at.checkbox(key="select_p1").disabled
+
+
+def test_aufsatz_without_selection_prompts_to_select():
+    at = _login({"APP_PASSWORD": "geheim123"})
+    at.session_state["library"] = _library_with_paper()
+    at.run()
+    _goto(at, "Aufsatz")
+    assert any("Bibliothek" in i.value for i in at.info)
+    assert not [b for b in at.button if b.label == "Aufsatz erstellen"]
+
+
+def test_aufsatz_uses_only_selected_papers_and_offers_both_downloads():
+    at = _login({"APP_PASSWORD": "geheim123", "CLAUDE_API_KEY": "sk-test"})
+    at.session_state["library"] = _essay_library()
+    at.run()
+    _goto(at, "Aufsatz")
+    with patch("modules.essay.generate_body", return_value="Generierter Hauptteil.") as mock_body:
+        [b for b in at.button if b.label == "Aufsatz erstellen"][0].click().run()
+    assert not at.exception
+    papers_arg = mock_body.call_args[0][1]
+    assert [p.id for p in papers_arg] == ["p1", "p2"]
+    preview = [t for t in at.text_area if t.label == "Aufsatz"][0].value
+    assert preview.index("Ich bin eine muslimische Frau") < preview.index("Generierter Hauptteil.")
+    assert preview.index("Generierter Hauptteil.") < preview.index("Methodisch wurde diese Arbeit")
+    labels = {b.label for b in at.get("download_button")}
+    assert {"Als PDF herunterladen", "Als Word herunterladen"} <= labels
+
+
+def test_aufsatz_missing_api_key_shows_error_not_exception():
+    at = _login({"APP_PASSWORD": "geheim123"})
+    at.session_state["library"] = _essay_library()
+    at.run()
+    _goto(at, "Aufsatz")
+    [b for b in at.button if b.label == "Aufsatz erstellen"][0].click().run()
+    assert not at.exception
+    assert any("CLAUDE_API_KEY ist nicht konfiguriert" in e.value for e in at.error)
+
+
+def test_logout_clears_essay_result():
+    at = _login({"APP_PASSWORD": "geheim123"})
+    at.session_state["essay_result"] = {"title": "T", "sections": [("A", "B")]}
+    at.run()
+    [b for b in at.sidebar.button if b.label == "Logout"][0].click().run()
+    assert "essay_result" not in at.session_state

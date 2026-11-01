@@ -15,6 +15,8 @@ class Paper:
     extract_status: str = "pending"
     report: Optional[dict] = None
     mode_used: Optional[str] = None
+    pdf_bytes: Optional[bytes] = None
+    selected: bool = False
 
 
 @dataclass
@@ -48,9 +50,26 @@ def set_report(library: Library, paper_id: str, report: dict, mode_used: str) ->
     return library
 
 
-def set_full_text(library: Library, paper_id: str, full_text: str, status: str) -> Library:
+def set_full_text(library: Library, paper_id: str, full_text: str, status: str, pdf_bytes: Optional[bytes] = None) -> Library:
     paper = library.papers.get(paper_id)
     if paper is not None:
         paper.full_text = full_text
         paper.extract_status = status
+        paper.pdf_bytes = pdf_bytes
     return library
+
+
+def set_selected(library: Library, paper_id: str, selected: bool) -> Library:
+    paper = library.papers.get(paper_id)
+    if paper is not None:
+        paper.selected = selected
+    return library
+
+
+def usable_text(paper: Paper) -> tuple:
+    """Return the best available text and its kind: "full", "abstract" or "none"."""
+    if paper.full_text:
+        return paper.full_text, "full"
+    if paper.abstract:
+        return paper.abstract, "abstract"
+    return "", "none"

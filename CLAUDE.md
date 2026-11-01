@@ -42,13 +42,17 @@ There is no linter or build step. Local secrets go in `.streamlit/secrets.toml` 
 
 `custom_report` answers a preset or uploaded question set as free text and doesn't use the schema. It always sends the full text, without the mode A/B logic or the length check.
 
+**Aufsatz page**
+
+`essay` writes a body from all papers ticked in the Bibliothek and frames it with the author's fixed texts in `content/` (first line is the heading), which end up verbatim in the output. The Schlusswort must stay the last section. The reference list is built from library metadata rather than by Claude, so it can't contain invented sources. `Paper`s without a full text fall back to their abstract through `library_state.usable_text`, and the prompt and references mark them as abstract-only.
+
 **Search**
 
 Each `search_*` module exposes `search(query, api_key=None)` and returns dicts with the same keys: `id, title, authors, year, abstract, pdf_url, source`. To add a source, register it in `search_aggregator.PROVIDERS` and add its checkbox in `search_page`. The aggregator dedupes by normalized title and treats a failing provider as having no results.
 
 **Security measures to preserve**
 
-- `_is_safe_pdf_url` blocks SSRF through `pdf_url` values returned by search APIs, and redirects are deliberately not followed.
+- `paper_download.fetch_pdf` blocks SSRF through `pdf_url` values returned by search APIs by re-validating every redirect hop with `is_safe_url`.
 - `export_excel._sanitize_cell` prevents formula injection.
 - `_escape_md` escapes third-party titles before they are rendered as Markdown.
 
