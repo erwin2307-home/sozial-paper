@@ -28,7 +28,9 @@ PRESET_TRANSKULTURALITAET = [
 
 def extract_questions_from_text(raw_text: str, client) -> list:
     prompt = (
-        "Extrahiere alle Fragen oder Aufgabenstellungen aus dem folgenden Text als Liste. "
+        "Extrahiere wirklich alle Fragen und Aufgabenstellungen aus dem folgenden Text als Liste, "
+        "auch jede Unterfrage, Teilaufgabe und jeden Eintrag aus einer Tabelle (Spalten sind durch | getrennt). "
+        "Uebernimm den Wortlaut unveraendert und in der Reihenfolge des Textes und fasse nichts zusammen. "
         "Antworte ausschliesslich mit einem JSON-Array von Strings, ein Eintrag pro Frage/Aufgabe.\n\n"
         f"TEXT:\n{raw_text}"
     )
@@ -40,20 +42,3 @@ def extract_questions_from_text(raw_text: str, client) -> list:
     except json.JSONDecodeError:
         questions = []
     return [str(q) for q in questions if str(q).strip()]
-
-
-def build_answer_prompt(questions: list, context_text: str, language: str) -> str:
-    language_name = LANGUAGE_NAMES.get(language, "Deutsch")
-    numbered = "\n".join(f"{i + 1}. {q}" for i, q in enumerate(questions))
-    return (
-        "Beantworte die folgenden Fragen auf Basis des gegebenen Paper-Textauszugs, "
-        f"in zusammenhaengendem Fliesstext, auf {language_name}. "
-        "Gehe auf jede Frage ein, aber ohne die Fragen selbst zu wiederholen oder zu nummerieren.\n\n"
-        f"FRAGEN:\n{numbered}\n\n"
-        f"TEXT:\n{context_text}"
-    )
-
-
-def answer_questions(questions: list, context_text: str, language: str, client) -> str:
-    prompt = build_answer_prompt(questions, context_text, language)
-    return call_claude(client, prompt)

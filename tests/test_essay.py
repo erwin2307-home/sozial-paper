@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from modules import essay
 from modules.library_state import Paper
@@ -75,6 +75,61 @@ def test_sections_place_personal_text_before_references():
 
 def test_generate_body_requests_long_answer_from_claude():
     client = MagicMock()
-    client.messages.create.return_value.content = [SimpleNamespace(type="text", text="Antwort")]
-    assert essay.generate_body(["F?"], [_full()], "de", client) == "Antwort"
+    client.messages.create.return_value.content = [SimpleNamespace(type="text", text="[[ANTWORT 1]]\nAntwort")]
+    assert essay.generate_body(["F?"], [_full()], "de", client) == "Frage 1: F?\n\nAntwort"
     assert client.messages.create.call_args.kwargs["max_tokens"] == essay.MAX_OUTPUT_TOKENS
+
+
+def _answers(*numbers):
+    return "\n".join(f"[[ANTWORT {n}]]\nAntwort {n}" for n in numbers)
+
+
+def test_generate_body_shows_every_question_with_its_answer_in_order():
+    with patch("modules.essay.call_claude", return_value=_answers(1, 2)):
+        body = essay.generate_body(["Erste?", "Zweite?"], [_full()], "de", client=object())
+    assert body == "Frage 1: Erste?\n\nAntwort 1\n\nFrage 2: Zweite?\n\nAntwort 2"
+
+
+def test_generate_body_asks_again_for_skipped_question():
+    with patch("modules.essay.call_claude", side_effect=[_answers(1), _answers(2)]) as mock_call:
+        body = essay.generate_body(["Erste?", "Zweite?"], [_full()], "de", client=object())
+    assert "Antwort 2" in body
+    retry_prompt = mock_call.call_args_list[1][0][1]
+    assert "2. Zweite?" in retry_prompt
+    assert "Erste?" not in retry_prompt
+
+
+def test_generate_body_marks_question_still_unanswered_after_retry():
+    with patch("modules.essay.call_claude", side_effect=[_answers(1), "kein Marker"]):
+        body = essay.generate_body(["Erste?", "Zweite?"], [_full()], "de", client=object())
+    assert f"Frage 2: Zweite?\n\n{essay.MISSING_ANSWER}" in body
+
+
+def test_generate_body_splits_many_questions_into_batches():
+    questions = [f"Frage {n}?" for n in range(1, essay.QUESTIONS_PER_CALL + 2)]
+    calls = [_answers(*range(1, essay.QUESTIONS_PER_CALL + 1)), _answers(essay.QUESTIONS_PER_CALL + 1)]
+    with patch("modules.essay.call_claude", side_effect=calls) as mock_call:
+        body = essay.generate_body(questions, [_full()], "de", client=object())
+    assert mock_call.call_count == 2
+    assert essay.MISSING_ANSWER not in body
+
+
+def test_prompt_demands_complete_marked_answer_for_each_question():
+    prompt = essay.build_prompt(["F?"], [_full()], "de")
+    assert "[[ANTWORT 1]]" in prompt
+    assert "vollständig" in prompt
+
+
+def test_prompt_uses_personal_perspective_only_when_requested():
+    assert essay.PERSPECTIVE_INSTRUCTION not in essay.build_prompt(["F?"], [_full()], "de")
+    tailored = essay.build_prompt(["F?"], [_full()], "de", personal_perspective=True)
+    assert essay.PERSPECTIVE_INSTRUCTION in tailored
+    for term in ("Frau", "Muslimin", "Diskriminierung", "neurologisch"):
+        assert term in essay.PERSPECTIVE_INSTRUCTION
+    assert "keine persönlichen Erfahrungen" in tailored
+
+
+def test_generate_body_passes_personal_perspective_to_prompt():
+    with patch("modules.essay.call_claude", return_value=_answers(1)) as mock_call:
+        essay.generate_body(["F?"], [_full()], "de", client=object(), personal_perspective=True)
+    assert essay.PERSPECTIVE_INSTRUCTION in mock_call.call_args[0][1]

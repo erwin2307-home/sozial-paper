@@ -40,11 +40,11 @@ There is no linter or build step. Local secrets go in `.streamlit/secrets.toml` 
 
 **Aufgaben page**
 
-`custom_report` answers a preset or uploaded question set as free text and doesn't use the schema. It always sends the full text, without the mode A/B logic or the length check.
+`custom_report` holds the question preset and extracts questions from an uploaded document, including table rows from `docx_extract`.
 
-**Aufsatz page**
+**Aufgaben and Aufsatz pages**
 
-`essay` writes a body from all papers ticked in the Bibliothek and frames it with the author's fixed texts in `content/` (first line is the heading), which end up verbatim in the output. The Schlusswort must stay the last section. The reference list is built from library metadata rather than by Claude, so it can't contain invented sources. `Paper`s without a full text fall back to their abstract through `library_state.usable_text`, and the prompt and references mark them as abstract-only.
+Both pages share `_report_form`; Aufgaben uses one chosen paper, Aufsatz all papers ticked in the Bibliothek. `essay.generate_body` answers questions in batches and matches answers by their `[[ANTWORT n]]` marker, so skipped questions are retried and otherwise visibly marked. The optional perspective filter adds `PERSPECTIVE_INSTRUCTION` to the prompt, which must not license invented personal experiences. The result is framed with the author's fixed texts in `content/` (first line is the heading), which end up verbatim in the output. The Schlusswort must stay the last section. The reference list is built from library metadata rather than by Claude, so it can't contain invented sources. `Paper`s without a full text fall back to their abstract through `library_state.usable_text`, and the prompt and references mark them as abstract-only.
 
 **Search**
 

@@ -165,6 +165,7 @@ def _question_input():
     if source.startswith("Vorlage"):
         return custom_report.PRESET_TRANSKULTURALITAET
     question_file = st.file_uploader("Fragen-Dokument (.docx oder .pdf)", type=["docx", "pdf"])
+    st.session_state.pop("aufgaben_raw_text", None)
     if question_file is not None:
         if question_file.name.lower().endswith(".docx"):
             raw_text, status = docx_extract.extract_text(question_file.getvalue())
@@ -266,40 +267,7 @@ def aufgaben_page():
     if not text:
         return
 
-    questions = _question_input()
-
-    language = st.selectbox(
-        "Sprache", ["de", "en", "tr"],
-        format_func=lambda code: custom_report.LANGUAGE_NAMES[code],
-    )
-    personal_text = st.text_area("Eigene Ergaenzung (z.B. persoenliche Perspektive)")
-
-    if st.button("Bericht erstellen"):
-        try:
-            client = get_client(st.secrets["CLAUDE_API_KEY"])
-            active_questions = _resolve_questions(questions, client)
-            if active_questions is None:
-                return
-            answer = custom_report.answer_questions(active_questions, text, language, client)
-            final_text = answer
-            if personal_text.strip():
-                final_text = f"{answer}\n\n{personal_text.strip()}"
-            st.session_state.aufgaben_result = final_text
-        except KeyError:
-            st.error("CLAUDE_API_KEY ist nicht konfiguriert.")
-        except EmptyResponseError as exc:
-            st.error(str(exc))
-        except anthropic.RateLimitError:
-            st.error("Claude-API-Limit erreicht. Bitte in einigen Minuten erneut versuchen.")
-        except anthropic.APIError as exc:
-            st.error(f"Claude-API-Fehler: {type(exc).__name__}. Bitte erneut versuchen.")
-
-    if st.session_state.get("aufgaben_result"):
-        st.text_area("Ergebnis", st.session_state.aufgaben_result, height=300)
-        pdf_bytes = export_pdf.build_text_report_pdf(
-            "Aufgabe: Diversitaet und Intersektionalitaet", st.session_state.aufgaben_result,
-        )
-        st.download_button("PDF herunterladen", pdf_bytes, file_name="aufgabe_bericht.pdf")
+    _report_form([paper], "Aufgabe", "Bericht erstellen", "aufgaben_result", "Ergebnis")
 
 
 def aufsatz_page():
@@ -314,22 +282,34 @@ def aufsatz_page():
         _, kind = library_state.usable_text(paper)
         st.write(f"- {_escape_md(paper.title)} ({TEXT_KIND_LABELS[kind]})")
 
-    title = st.text_input("Titel", value="Aufsatz")
+    _report_form(papers, "Aufsatz", "Aufsatz erstellen", "essay_result", "Aufsatz")
+
+
+def _report_form(papers, default_title, button_label, result_key, result_label):
+    """Shared form: questions and options in, framed report with PDF and Word download out."""
+    title = st.text_input("Titel", value=default_title)
     questions = _question_input()
     language = st.selectbox(
         "Sprache des Hauptteils", ["de", "en", "tr"],
         format_func=lambda code: custom_report.LANGUAGE_NAMES[code],
     )
+    personal_perspective = st.checkbox(
+        "Filter: auf Frau, Muslimin, Diskriminierung und neurologische Erkrankung zuschneiden",
+        key="personal_perspective",
+    )
     personal_text = st.text_area("Eigene Ergaenzung (z.B. persoenliche Perspektive)")
 
-    if st.button("Aufsatz erstellen"):
+    if st.button(button_label):
         try:
             client = get_client(st.secrets["CLAUDE_API_KEY"])
-            active_questions = _resolve_questions(questions, client)
-            if active_questions is None:
-                return
-            body = essay.generate_body(active_questions, papers, language, client)
-            st.session_state.essay_result = {
+            with st.spinner("Fragen werden beantwortet, das kann einige Minuten dauern ..."):
+                active_questions = _resolve_questions(questions, client)
+                if active_questions is None:
+                    return
+                body = essay.generate_body(
+                    active_questions, papers, language, client, personal_perspective=personal_perspective,
+                )
+            st.session_state[result_key] = {
                 "title": title, "language": language,
                 "sections": essay.build_sections(body, papers, personal_text),
             }
@@ -342,13 +322,15 @@ def aufsatz_page():
         except anthropic.APIError as exc:
             st.error(f"Claude-API-Fehler: {type(exc).__name__}. Bitte erneut versuchen.")
 
-    result = st.session_state.get("essay_result")
+    result = st.session_state.get(result_key)
     if result:
         preview = "\n\n".join(f"{heading}\n\n{body}" for heading, body in result["sections"])
-        st.text_area("Aufsatz", preview, height=400)
+        st.text_area(result_label, preview, height=400)
+        if essay.MISSING_ANSWER in preview:
+            st.warning("Mindestens eine Frage wurde nicht beantwortet. Bitte erneut erstellen.")
         if result["language"] == "tr":
             st.warning("Das PDF kann tuerkische Sonderzeichen nicht darstellen. Bitte die Word-Datei verwenden.")
-        filename = _safe_filename(result["title"]) or "aufsatz"
+        filename = _safe_filename(result["title"]) or "bericht"
         st.download_button(
             "Als PDF herunterladen", export_pdf.build_sections_pdf(result["title"], result["sections"]),
             file_name=f"{filename}.pdf", mime="application/pdf",

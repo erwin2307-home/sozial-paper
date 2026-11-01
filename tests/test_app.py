@@ -4,7 +4,7 @@ import httpx
 import anthropic
 from streamlit.testing.v1 import AppTest
 
-from modules import library_state
+from modules import essay, library_state
 from modules.claude_client import EmptyResponseError
 
 # AppTest.from_file resolves a relative path against the directory of the
@@ -432,15 +432,53 @@ def test_aufgaben_preset_generates_result_and_download_button():
     at.session_state["library"] = _library_with_paper()
     at.run()
     _goto(at, "Aufgaben")
-    with patch("modules.custom_report.answer_questions", return_value="Generierte Antwort.") as mock_answer:
+    with patch("modules.essay.generate_body", return_value="Generierte Antwort.") as mock_answer:
         erstellen = [b for b in at.button if b.label == "Bericht erstellen"][0]
         erstellen.click().run()
     assert not at.exception
-    questions_arg, _context_arg, language_arg, _client_arg = mock_answer.call_args[0]
+    questions_arg, papers_arg, language_arg, _client_arg = mock_answer.call_args[0]
     assert len(questions_arg) == 3
+    assert [p.id for p in papers_arg] == ["p1"]
     assert language_arg == "de"
-    assert any("Generierte Antwort." in t.value for t in at.text_area)
-    assert any(b.label == "PDF herunterladen" for b in at.download_button)
+    assert mock_answer.call_args.kwargs["personal_perspective"] is False
+    ergebnis = [t for t in at.text_area if t.label == "Ergebnis"][0].value
+    assert ergebnis.index("Ich bin eine muslimische Frau") < ergebnis.index("Generierte Antwort.")
+    assert ergebnis.index("Generierte Antwort.") < ergebnis.index("Methodisch wurde diese Arbeit")
+    labels = {b.label for b in at.download_button}
+    assert {"Als PDF herunterladen", "Als Word herunterladen"} <= labels
+
+
+def test_aufgaben_personal_perspective_checkbox_reaches_generation():
+    at = _login({"APP_PASSWORD": "geheim123", "CLAUDE_API_KEY": "sk-test"})
+    at.session_state["library"] = _library_with_paper()
+    at.run()
+    _goto(at, "Aufgaben")
+    at.checkbox(key="personal_perspective").check().run()
+    with patch("modules.essay.generate_body", return_value="Antwort.") as mock_answer:
+        [b for b in at.button if b.label == "Bericht erstellen"][0].click().run()
+    assert mock_answer.call_args.kwargs["personal_perspective"] is True
+
+
+def test_aufgaben_warns_when_a_question_stayed_unanswered():
+    at = _login({"APP_PASSWORD": "geheim123", "CLAUDE_API_KEY": "sk-test"})
+    at.session_state["library"] = _library_with_paper()
+    at.run()
+    _goto(at, "Aufgaben")
+    body = f"Frage 1: F?\n\n{essay.MISSING_ANSWER}"
+    with patch("modules.essay.generate_body", return_value=body):
+        [b for b in at.button if b.label == "Bericht erstellen"][0].click().run()
+    assert any("nicht beantwortet" in w.value for w in at.warning)
+
+
+def test_uploaded_questions_are_forgotten_when_document_is_removed():
+    at = _login({"APP_PASSWORD": "geheim123", "CLAUDE_API_KEY": "sk-test"})
+    at.session_state["library"] = _library_with_paper()
+    at.session_state["aufgaben_raw_text"] = "Alte Frage?"
+    at.run()
+    _goto(at, "Aufgaben")
+    source = [r for r in at.radio if r.label == "Fragen-Quelle"][0]
+    source.set_value("Eigenes Fragen-Dokument hochladen").run()
+    assert "aufgaben_raw_text" not in at.session_state
 
 
 def test_aufgaben_merges_personal_text_into_result():
@@ -450,7 +488,7 @@ def test_aufgaben_merges_personal_text_into_result():
     _goto(at, "Aufgaben")
     ergaenzung = [t for t in at.text_area if t.label == "Eigene Ergaenzung (z.B. persoenliche Perspektive)"][0]
     ergaenzung.input("Mein persoenlicher Text.").run()
-    with patch("modules.custom_report.answer_questions", return_value="KI-Antwort."):
+    with patch("modules.essay.generate_body", return_value="KI-Antwort."):
         erstellen = [b for b in at.button if b.label == "Bericht erstellen"][0]
         erstellen.click().run()
     assert not at.exception

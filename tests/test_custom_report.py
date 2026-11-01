@@ -1,12 +1,6 @@
 from unittest.mock import patch
 
-from modules.custom_report import (
-    PRESET_TRANSKULTURALITAET,
-    LANGUAGE_NAMES,
-    extract_questions_from_text,
-    build_answer_prompt,
-    answer_questions,
-)
+from modules.custom_report import PRESET_TRANSKULTURALITAET, extract_questions_from_text
 
 
 def test_preset_transkulturalitaet_has_three_items():
@@ -33,17 +27,10 @@ def test_extract_questions_from_text_garbage_returns_empty_list():
     assert result == []
 
 
-def test_build_answer_prompt_contains_questions_context_and_language():
-    prompt = build_answer_prompt(["Frage 1?", "Frage 2?"], "PAPIERTEXT", "en")
-    assert "Frage 1?" in prompt
-    assert "Frage 2?" in prompt
-    assert "PAPIERTEXT" in prompt
-    assert LANGUAGE_NAMES["en"] in prompt
-
-
-def test_answer_questions_calls_claude_and_returns_text():
-    with patch("modules.custom_report.call_claude", return_value="Antworttext") as mock_call:
-        result = answer_questions(["Frage?"], "PAPIERTEXT", "de", client=object())
-    assert result == "Antworttext"
-    prompt_used = mock_call.call_args[0][1]
-    assert "PAPIERTEXT" in prompt_used
+def test_extract_questions_prompt_demands_every_question_and_subtask():
+    with patch("modules.custom_report.call_claude", return_value="[]") as mock_call:
+        extract_questions_from_text("roher Text", client=object())
+    prompt = mock_call.call_args[0][1]
+    assert "Unterfrage" in prompt
+    assert "Tabelle" in prompt
+    assert "roher Text" in prompt
