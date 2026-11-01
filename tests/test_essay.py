@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from modules import essay
@@ -74,6 +75,6 @@ def test_sections_place_personal_text_before_references():
 
 def test_generate_body_requests_long_answer_from_claude():
     client = MagicMock()
-    client.messages.create.return_value.content = [MagicMock(text="Antwort")]
+    client.messages.create.return_value.content = [SimpleNamespace(type="text", text="Antwort")]
     assert essay.generate_body(["F?"], [_full()], "de", client) == "Antwort"
     assert client.messages.create.call_args.kwargs["max_tokens"] == essay.MAX_OUTPUT_TOKENS

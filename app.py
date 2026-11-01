@@ -8,7 +8,7 @@ from modules import auth, jats_extract, library_state, paper_download, pdf_extra
 from modules import analysis_direct, analysis_ragpipeline, qa_engine
 from modules import export_excel, export_pdf, export_word
 from modules import custom_report, docx_extract, essay
-from modules.claude_client import get_client
+from modules.claude_client import EmptyResponseError, get_client
 
 st.set_page_config(page_title="Sozialwissenschafts-Paper-Analyse", layout="wide")
 
@@ -220,6 +220,8 @@ def analysis_page():
             st.success("Analyse abgeschlossen.")
         except KeyError:
             st.error("CLAUDE_API_KEY ist nicht konfiguriert.")
+        except EmptyResponseError as exc:
+            st.error(str(exc))
         except anthropic.RateLimitError:
             st.error("Claude-API-Limit erreicht. Bitte in einigen Minuten erneut versuchen.")
         except anthropic.APIError as exc:
@@ -247,6 +249,8 @@ def qa_page():
             st.write(answer)
         except KeyError:
             st.error("CLAUDE_API_KEY ist nicht konfiguriert.")
+        except EmptyResponseError as exc:
+            st.error(str(exc))
         except anthropic.RateLimitError:
             st.error("Claude-API-Limit erreicht. Bitte in einigen Minuten erneut versuchen.")
         except anthropic.APIError as exc:
@@ -283,6 +287,8 @@ def aufgaben_page():
             st.session_state.aufgaben_result = final_text
         except KeyError:
             st.error("CLAUDE_API_KEY ist nicht konfiguriert.")
+        except EmptyResponseError as exc:
+            st.error(str(exc))
         except anthropic.RateLimitError:
             st.error("Claude-API-Limit erreicht. Bitte in einigen Minuten erneut versuchen.")
         except anthropic.APIError as exc:
@@ -329,6 +335,8 @@ def aufsatz_page():
             }
         except KeyError:
             st.error("CLAUDE_API_KEY ist nicht konfiguriert.")
+        except EmptyResponseError as exc:
+            st.error(str(exc))
         except anthropic.RateLimitError:
             st.error("Claude-API-Limit erreicht. Bitte in einigen Minuten erneut versuchen.")
         except anthropic.APIError as exc:

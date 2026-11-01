@@ -5,6 +5,7 @@ import anthropic
 from streamlit.testing.v1 import AppTest
 
 from modules import library_state
+from modules.claude_client import EmptyResponseError
 
 # AppTest.from_file resolves a relative path against the directory of the
 # file that calls it (tests/), not against the pytest invocation cwd. Use a
@@ -581,6 +582,17 @@ def test_aufsatz_uses_only_selected_papers_and_offers_both_downloads():
     assert preview.index("Generierter Hauptteil.") < preview.index("Methodisch wurde diese Arbeit")
     labels = {b.label for b in at.get("download_button")}
     assert {"Als PDF herunterladen", "Als Word herunterladen"} <= labels
+
+
+def test_aufsatz_cut_off_response_shows_error_not_exception():
+    at = _login({"APP_PASSWORD": "geheim123", "CLAUDE_API_KEY": "sk-test"})
+    at.session_state["library"] = _essay_library()
+    at.run()
+    _goto(at, "Aufsatz")
+    with patch("modules.essay.generate_body", side_effect=EmptyResponseError("Antwort abgeschnitten.")):
+        [b for b in at.button if b.label == "Aufsatz erstellen"][0].click().run()
+    assert not at.exception
+    assert any("Antwort abgeschnitten." in e.value for e in at.error)
 
 
 def test_aufsatz_missing_api_key_shows_error_not_exception():

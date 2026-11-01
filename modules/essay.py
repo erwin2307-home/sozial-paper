@@ -8,7 +8,7 @@ from modules.library_state import usable_text
 
 CONTENT_DIR = Path(__file__).resolve().parent.parent / "content"
 MAX_SOURCE_CHARS = 400_000
-MAX_OUTPUT_TOKENS = 8192
+MAX_OUTPUT_TOKENS = 16000
 _CHUNK_SIZE = 1500
 
 
